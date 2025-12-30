@@ -1,0 +1,160 @@
+// efootball_frontend.jsx
+// Combined frontend for eFootball Platform
+
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { io } from "socket.io-client";
+import axios from "axios";
+
+// ----------------- ToastNotifications -----------------
+function ToastNotifications({ userId }) {
+  const [toasts,setToasts]=useState([]);
+  const socket = io("http://localhost:3000");
+  useEffect(()=>{
+    socket.emit("register", userId);
+    socket.on("notification", msg=>{
+      const id=Date.now();
+      setToasts(prev=>[...prev,{id,message:msg}]);
+      setTimeout(()=>setToasts(prev=>prev.filter(t=>t.id!==id)),5000);
+    });
+    return ()=>socket.disconnect();
+  },[userId]);
+  return (
+    <div className="fixed top-5 right-5 z-50 space-y-2">
+      {toasts.map(t=>(
+        <div key={t.id} className="bg-green-500 text-white p-3 rounded shadow-lg">{t.message}</div>
+      ))}
+    </div>
+  );
+}
+
+// ----------------- CreateMatch -----------------
+function CreateMatch({ users }) {
+  const [mode,setMode] = useState("1v1");
+  const [amount,setAmount] = useState(20);
+  const [selectedUsers,setSelectedUsers] = useState([]);
+
+  const create = async () => {
+    if(selectedUsers.length===0 || (mode==="1v1" && selectedUsers.length!==2) || (mode==="league" && selectedUsers.length>10)){
+      alert("Invalid participants");
+      return;
+    }
+    await axios.post("http://localhost:3000/create-match", { participants: selectedUsers, amount, mode });
+    alert("Match created. Users notified to deposit.");
+  }
+
+  return (
+    <div className="p-4 border rounded max-w-md mx-auto space-y-3">
+      <h2 className="text-xl font-bold">Create Match</h2>
+      <select value={mode} onChange={e=>setMode(e.target.value)} className="border p-2 w-full">
+        <option value="1v1">1v1</option>
+        <option value="league">League (up to 10)</option>
+      </select>
+      <input type="number" value={amount} onChange={e=>setAmount(Number(e.target.value))} placeholder="Amount Ksh" className="border p-2 w-full"/>
+      <select multiple value={selectedUsers} onChange={e=>setSelectedUsers([...e.target.selectedOptions].map(o=>Number(o.value)))} className="border p-2 w-full h-32">
+        {users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+      </select>
+      <button onClick={create} className="bg-blue-500 text-white p-2 rounded w-full">Create Match</button>
+    </div>
+  );
+}
+
+// ----------------- MatchList -----------------
+function MatchList({ userId }) {
+  const [matches,setMatches] = useState([]);
+
+  const fetchMatches = async () => {
+    const res = await axios.get("http://localhost:3000/matches");
+    setMatches(res.data);
+  }
+
+  useEffect(()=>{ fetchMatches(); }, []);
+
+  const deposit = async (matchId, amount) => {
+    await axios.post("http://localhost:3000/mpesa-payment", { userId, matchId, amount });
+    alert("Deposit processed (simulated)");
+    fetchMatches();
+  }
+
+  return (
+    <div className="p-4 border rounded max-w-3xl mx-auto space-y-3">
+      <h2 className="text-xl font-bold">Your Matches</h2>
+      {matches.map(m=>(
+        <div key={m.id} className="p-2 border rounded flex justify-between items-center">
+          <div>
+            <p>Match {m.id} ({m.mode})</p>
+            <p>Status: {m.status}</p>
+            <p>Participants: {m.participants.map(p=>p.userId).join(", ")}</p>
+          </div>
+          {!m.participants.find(p=>p.userId===userId)?.deposited && 
+            <button onClick={()=>deposit(m.id, m.amount)} className="bg-green-500 text-white p-1 px-3 rounded">Deposit {m.amount}</button>
+          }
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ----------------- PlayerDashboard -----------------
+function PlayerDashboard({ user, users }) {
+  return (
+    <div className="space-y-6">
+      <ToastNotifications userId={user.id}/>
+      <h1 className="text-3xl font-bold text-center">Welcome, {user.name}</h1>
+      <CreateMatch users={users}/>
+      <MatchList userId={user.id}/>
+    </div>
+  );
+}
+
+// ----------------- Admin Components -----------------
+function AdminDashboard() {
+  const [users,setUsers] = useState([]);
+  useEffect(()=>{
+    axios.get("http://localhost:3000/admin/users").then(res=>setUsers(res.data));
+  }, []);
+  return (
+    <div className="p-4 border rounded max-w-3xl mx-auto space-y-2">
+      <h2 className="text-xl font-bold">Users</h2>
+      {users.map(u=><div key={u.id}>{u.name} - Wallet: {u.wallet}</div>)}
+    </div>
+  );
+}
+
+function AdminAnalytics() {
+  const [analytics,setAnalytics] = useState({});
+  useEffect(()=>{
+    axios.get("http://localhost:3000/admin/notifications/analytics").then(res=>setAnalytics(res.data));
+  }, []);
+  return (
+    <div className="p-4 border rounded max-w-3xl mx-auto space-y-2">
+      <h2 className="text-xl font-bold">Notifications Analytics</h2>
+      <pre>{JSON.stringify(analytics, null, 2)}</pre>
+    </div>
+  );
+}
+
+function AdminDashboardPage() {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold text-center">Admin Dashboard</h1>
+      <AdminDashboard />
+      <AdminAnalytics />
+    </div>
+  );
+}
+
+// ----------------- App -----------------
+export default function App() {
+  const user = { id: 1, name: "Abdallah" };
+  const users = [{ id:1,name:"Abdallah" }, { id:2,name:"John" }];
+
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<PlayerDashboard user={user} users={users}/>}/>
+        <Route path="/admin" element={<AdminDashboardPage />}/>
+      </Routes>
+    </Router>
+  );
+}
